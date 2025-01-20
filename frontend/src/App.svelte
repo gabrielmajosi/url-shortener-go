@@ -3,7 +3,7 @@
     import Toastify from 'toastify-js';
     import 'toastify-js/src/toastify.css';
 
-    const serverUrl = "http://localhost:8080";
+    const serverUrl = "https://s.shinypasta.com";
     $: inputUrl = "";
     $: showShortenedUrl = false;
     $: shortenedUrl = "";
