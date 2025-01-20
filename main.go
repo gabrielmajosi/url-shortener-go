@@ -1,8 +1,9 @@
 package main
 
 import (
+	"embed"
 	"github.com/dchest/uniuri"
-	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -12,6 +13,10 @@ import (
 const serverAddr = ":8080"
 const storeFile = "store.csv"
 
+//go:embed web
+var web embed.FS
+
+// TODO: use dirty flag to avoid reading from disk periodically
 func periodicSaveToCsv(store *map[string]string) {
 	for {
 		// sleep
@@ -28,23 +33,10 @@ func periodicSaveToCsv(store *map[string]string) {
 func main() {
 	var store = LoadStore()
 	go periodicSaveToCsv(&store)
-
 	slog.Info("Loaded store", "data", store)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		//_, _ = fmt.Fprintf(w, "SEE API DOCS")
-
-		templ, err := template.ParseFiles("home.html")
-		if err != nil {
-			slog.Error("Error parsing template", "error", err)
-			return
-		}
-
-		err = templ.Execute(w, nil)
-		if err != nil {
-			slog.Error("Error executing template", "error", err)
-		}
-	})
+	webRoot, _ := fs.Sub(web, "web")
+	http.Handle("/", http.FileServer(http.FS(webRoot)))
 
 	http.HandleFunc("GET /l/{slug}", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
@@ -73,6 +65,7 @@ func main() {
 		slog.Info("Stored", "slug", slug, "destination", url)
 
 		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(slug))
 	})
 
 	slog.Info("Listening on " + serverAddr)
