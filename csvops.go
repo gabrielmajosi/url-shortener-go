@@ -4,9 +4,10 @@ import (
 	"encoding/csv"
 	"log/slog"
 	"os"
+	"sync"
 )
 
-func CreateStore() {
+func createStore() {
 	file, err := os.Create(storeFile)
 	if err != nil {
 		slog.Error("Failed to create store file")
@@ -16,11 +17,11 @@ func CreateStore() {
 	_ = file.Close()
 }
 
-func LoadStore() map[string]string {
+func LoadStore() RecordsStore {
 	file, err := os.Open(storeFile)
 	if err != nil {
 		slog.Info("No store file found; creating new")
-		CreateStore()
+		createStore()
 		file, _ = os.Open(storeFile)
 	}
 
@@ -36,13 +37,18 @@ func LoadStore() map[string]string {
 
 	if err != nil {
 		slog.Error("Failed to parse CSV")
-		return nil
+		return RecordsStore{}
 	}
 
-	return RecordsToMap(records)
+	return RecordsStore{
+		records:  csvRecordsToMap(records),
+		mut:      sync.RWMutex{},
+		modified: false,
+	}
+
 }
 
-func RecordsToMap(records [][]string) map[string]string {
+func csvRecordsToMap(records [][]string) map[string]string {
 	slugs := map[string]string{}
 
 	for rowIndex, row := range records {
@@ -72,7 +78,7 @@ func RecordsToMap(records [][]string) map[string]string {
 	return slugs
 }
 
-func MapToRecords(slugs map[string]string) [][]string {
+func mapToCsvRecords(slugs map[string]string) [][]string {
 	var records []string
 
 	for slug := range slugs {
@@ -86,9 +92,10 @@ func MapToRecords(slugs map[string]string) [][]string {
 	return [][]string{records}
 }
 
-func SaveStore(slugs map[string]string) {
-	records := MapToRecords(slugs)
+func SaveStore(store *RecordsStore) {
+	csvRecords := mapToCsvRecords(store.records)
 
+	store.mut.Lock()
 	file, err := os.Create(storeFile)
 	if err != nil {
 		slog.Error("Failed to create store file")
@@ -98,9 +105,12 @@ func SaveStore(slugs map[string]string) {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	err = writer.WriteAll(records)
+	err = writer.WriteAll(csvRecords)
 	if err != nil {
 		slog.Error("Failed to save records to store")
 		return
 	}
+
+	_ = file.Close()
+	store.mut.Unlock()
 }

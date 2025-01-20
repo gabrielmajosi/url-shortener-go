@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"sync"
 	"time"
 )
 
@@ -16,16 +17,28 @@ const storeFile = "store.csv"
 //go:embed web
 var web embed.FS
 
-// TODO: use dirty flag to avoid reading from disk periodically
-func periodicSaveToCsv(store *map[string]string) {
+type RecordsStore struct {
+	records  map[string]string // slug -> url
+	mut      sync.RWMutex
+	modified bool
+}
+
+func periodicSaveToCsv(store *RecordsStore) {
 	for {
 		// sleep
 		time.Sleep(12 * time.Second)
+		if !store.modified {
+			continue
+		}
 
-		var currentDisk = LoadStore()
-		if !reflect.DeepEqual(currentDisk, *store) {
-			slog.Info("New entries written to file", "location", storeFile, "mem", *store, "disk", currentDisk)
-			SaveStore(*store)
+		var currentDiskRecords = LoadStore().records
+		store.mut.RLock()
+		if !reflect.DeepEqual(currentDiskRecords, store.records) {
+			store.mut.RUnlock()
+			slog.Info("New entries written to file", "location", storeFile, "mem", &store.records, "disk", currentDiskRecords)
+			SaveStore(store)
+		} else {
+			store.mut.RUnlock()
 		}
 	}
 }
@@ -33,14 +46,17 @@ func periodicSaveToCsv(store *map[string]string) {
 func main() {
 	var store = LoadStore()
 	go periodicSaveToCsv(&store)
-	slog.Info("Loaded store", "data", store)
+	slog.Info("Loaded store", "data", store.records)
 
 	webRoot, _ := fs.Sub(web, "web")
 	http.Handle("/", http.FileServer(http.FS(webRoot)))
 
 	http.HandleFunc("GET /l/{slug}", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
-		destinationUrl := store[slug]
+
+		store.mut.RLock()
+		destinationUrl := store.records[slug]
+		store.mut.RUnlock()
 
 		http.Redirect(w, r, destinationUrl, http.StatusPermanentRedirect)
 	})
@@ -61,7 +77,11 @@ func main() {
 		// generate the slug
 		slug := uniuri.New()
 
-		store[slug] = url
+		store.mut.Lock()
+		store.records[slug] = url
+		store.modified = true
+		store.mut.Unlock()
+
 		slog.Info("Stored", "slug", slug, "destination", url)
 
 		w.WriteHeader(http.StatusCreated)
